@@ -1,0 +1,14 @@
+﻿name: h3f-recon
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - pyyaml
+  - tqdm
+  - pytorch>=2.0
+  - cpuonly
+  - pip:
+      - open3d
