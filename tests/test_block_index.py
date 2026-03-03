@@ -1,4 +1,11 @@
-﻿import numpy as np
+﻿import sys
+from pathlib import Path
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from h3f_recon.data.block_index import BlockIndex
 
@@ -52,3 +59,10 @@ def test_query_far_point_returns_empty_candidates() -> None:
 
     far_query = np.array([100.0, -100.0, 80.0], dtype=np.float32)
     assert block_index.query(far_query, top_k=4) == []
+
+
+if __name__ == "__main__":
+    test_query_returns_reasonable_candidates_and_contains_covering_block()
+    test_query_topk_and_full_query_consistency()
+    test_query_far_point_returns_empty_candidates()
+    print("All block index tests passed.")
