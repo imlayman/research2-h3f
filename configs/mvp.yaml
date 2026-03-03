@@ -1,0 +1,58 @@
+﻿output_root: runs
+
+data:
+  mode: dummy
+  num_train_samples: 128
+  num_val_samples: 16
+  batch_size: 4
+  num_workers: 0
+  points_per_shape: 2048
+  surface_sample_count: 512
+  near_surface_sample_count: 512
+  eikonal_sample_count: 256
+  noise_std: 0.01
+  near_surface_offset: 0.03
+  world_bound: 1.0
+
+model:
+  resolutions: [16, 32, 64]
+  cells_per_level: [2048, 4096, 8192]
+  feature_dims: [8, 8, 8]
+  top_k: 3
+  num_frequencies: 6
+  hidden_dim: 96
+  decoder_layers: 4
+  coarse_hidden_dim: 64
+  coarse_layers: 3
+  max_candidates: 8
+
+train:
+  seed: 42
+  run_name: h3f_mvp
+  device: auto
+  epochs: 5
+  lr: 0.001
+  weight_decay: 0.0
+  grad_clip: 1.0
+  log_interval: 10
+  save_every: 1
+  resume: ""
+  seam_sample_count: 128
+  eikonal_sample_count: 128
+  loss:
+    surface: 1.0
+    sign: 1.0
+    eikonal: 0.1
+    seam: 0.2
+    seam_grad: 0.05
+    coarse_global: 0.1
+    blend_smooth: 0.01
+
+infer:
+  checkpoint: ""
+  run_name: h3f_mvp_infer
+  device: auto
+  grid_resolution: 48
+  query_batch_size: 65536
+  iso_threshold: 0.02
+  output_name: recon_surface
