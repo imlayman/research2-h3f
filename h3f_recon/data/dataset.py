@@ -357,3 +357,87 @@ class PointCloudBlockDataset(Dataset):
         if top_k is None:
             top_k = self.cfg.top_k
         return self.block_index.query_block_ids(query_point, top_k=top_k)
+
+
+class PointCloudTrainDataset(Dataset):
+    def __init__(
+        self,
+        point_cloud_path: str,
+        preprocess_cfg: PointCloudPreprocessConfig,
+        surface_sample_count: int,
+        points_per_shape: int,
+        virtual_length: int = 0,
+        base_seed: int = 42,
+    ) -> None:
+        super().__init__()
+        if surface_sample_count <= 0:
+            raise ValueError("surface_sample_count must be > 0")
+        if points_per_shape <= 0:
+            raise ValueError("points_per_shape must be > 0")
+
+        self.block_dataset = PointCloudBlockDataset(point_cloud_path=point_cloud_path, cfg=preprocess_cfg)
+        self.surface_sample_count = int(surface_sample_count)
+        self.points_per_shape = int(points_per_shape)
+        self.base_seed = int(base_seed)
+
+        self.global_points = self.block_dataset.points.astype(np.float32)
+        if self.block_dataset.normals is None:
+            self.global_normals = np.zeros_like(self.global_points, dtype=np.float32)
+        else:
+            self.global_normals = self.block_dataset.normals.astype(np.float32)
+
+        if self.global_points.shape[0] == 0:
+            raise ValueError("PointCloudTrainDataset received empty points")
+
+        default_len = max(1, len(self.block_dataset))
+        self.virtual_length = int(virtual_length) if int(virtual_length) > 0 else default_len
+
+    @property
+    def num_blocks(self) -> int:
+        return len(self.block_dataset)
+
+    def __len__(self) -> int:
+        return self.virtual_length
+
+    @staticmethod
+    def _safe_take(array: np.ndarray, indices: np.ndarray) -> np.ndarray:
+        if array.shape[0] == 0:
+            return np.zeros((indices.shape[0], array.shape[1]), dtype=np.float32)
+        return array[indices].astype(np.float32)
+
+    def _sample_indices(self, n: int, count: int, rng: np.random.Generator) -> np.ndarray:
+        if n <= 0:
+            return np.zeros((count,), dtype=np.int64)
+        replace = n < count
+        return rng.choice(n, size=count, replace=replace).astype(np.int64)
+
+    def __getitem__(self, idx: int) -> Dict[str, np.ndarray]:
+        if self.num_blocks <= 0:
+            raise RuntimeError("No active blocks found in point cloud")
+
+        block_item = self.block_dataset[int(idx) % self.num_blocks]
+        block_points = block_item["points"].astype(np.float32)
+        block_normals = block_item.get("normals")
+        if block_normals is None:
+            block_normals_np = np.zeros_like(block_points, dtype=np.float32)
+        else:
+            block_normals_np = block_normals.astype(np.float32)
+
+        if block_points.shape[0] == 0:
+            block_points = self.global_points
+            block_normals_np = self.global_normals
+
+        rng = np.random.default_rng(self.base_seed + int(idx))
+
+        surf_idx = self._sample_indices(block_points.shape[0], self.surface_sample_count, rng)
+        surface_points = self._safe_take(block_points, surf_idx)
+        surface_normals = self._safe_take(block_normals_np, surf_idx)
+
+        cloud_idx = self._sample_indices(block_points.shape[0], self.points_per_shape, rng)
+        point_cloud = self._safe_take(block_points, cloud_idx)
+
+        return {
+            "point_cloud": point_cloud.astype(np.float32),
+            "surface_points": surface_points.astype(np.float32),
+            "surface_normals": surface_normals.astype(np.float32),
+        }

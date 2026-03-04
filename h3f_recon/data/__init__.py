@@ -3,6 +3,7 @@
 try:
     from .dataset import (
         PointCloudBlockDataset,
+        PointCloudTrainDataset,
         PointCloudPreprocessConfig,
         estimate_normals_knn,
         load_point_cloud,

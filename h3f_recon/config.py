@@ -7,6 +7,13 @@ import yaml
 @dataclass
 class DataConfig:
     mode: str = "dummy"
+    point_cloud_path: str = ""
+    voxel_size: float = 0.0
+    block_size: float = 0.5
+    overlap_ratio: float = 0.25
+    estimate_normals: bool = False
+    normal_k: int = 16
+    fill_empty_normals: bool = True
     num_train_samples: int = 128
     num_val_samples: int = 16
     batch_size: int = 4

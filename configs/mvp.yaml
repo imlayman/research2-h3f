@@ -2,6 +2,13 @@
 
 data:
   mode: dummy
+  point_cloud_path: ""
+  voxel_size: 0.0
+  block_size: 0.5
+  overlap_ratio: 0.25
+  estimate_normals: false
+  normal_k: 16
+  fill_empty_normals: true
   num_train_samples: 128
   num_val_samples: 16
   batch_size: 4

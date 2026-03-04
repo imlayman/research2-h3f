@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from h3f_recon.config import load_config, save_config
-from h3f_recon.data import DummyPointCloudDataset
+from h3f_recon.data import DummyPointCloudDataset, PointCloudPreprocessConfig, PointCloudTrainDataset
 from h3f_recon.engine import compute_training_losses
 from h3f_recon.models import H3FRecon
 from h3f_recon.utils import (
@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-name", type=str, default="", help="Override train.run_name")
     parser.add_argument("--resume", type=str, default="", help="Checkpoint path for resume")
     parser.add_argument("--device", type=str, default="", help="Override train.device")
+    parser.add_argument("--point-cloud", type=str, default="", help="Override data.point_cloud_path")
     parser.add_argument("--max-steps", type=int, default=0, help="Train until this global step if > 0")
     parser.add_argument("--amp", action="store_true", help="Enable AMP (CUDA only)")
     return parser.parse_args()
@@ -42,6 +43,9 @@ def main() -> None:
         cfg.train.device = args.device
     if args.resume:
         cfg.train.resume = args.resume
+    if args.point_cloud:
+        cfg.data.point_cloud_path = args.point_cloud
+        cfg.data.mode = "point_cloud"
 
     run_dir = create_run_dir(cfg.output_root, cfg.train.run_name, prefix="train")
     logger = setup_logger("h3f_train", os.path.join(run_dir, "train.log"))
@@ -52,10 +56,41 @@ def main() -> None:
     logger.info("Run dir: %s", run_dir)
     logger.info("Using device: %s", device)
 
-    if cfg.data.mode != "dummy":
-        raise ValueError("This MVP trainer currently supports only data.mode=dummy")
+    if cfg.data.mode == "dummy":
+        train_dataset = DummyPointCloudDataset(cfg.data, split="train", base_seed=cfg.train.seed)
+    elif cfg.data.mode in {"point_cloud", "real"}:
+        if not cfg.data.point_cloud_path:
+            raise ValueError("Please set data.point_cloud_path or pass --point-cloud for real point cloud training")
 
-    train_dataset = DummyPointCloudDataset(cfg.data, split="train", base_seed=cfg.train.seed)
+        preprocess_cfg = PointCloudPreprocessConfig(
+            voxel_size=float(cfg.data.voxel_size),
+            block_size=float(cfg.data.block_size),
+            overlap_ratio=float(cfg.data.overlap_ratio),
+            top_k=int(cfg.model.top_k),
+            estimate_normals=bool(cfg.data.estimate_normals),
+            normal_k=int(cfg.data.normal_k),
+            fill_empty_normals=bool(cfg.data.fill_empty_normals),
+        )
+        train_dataset = PointCloudTrainDataset(
+            point_cloud_path=cfg.data.point_cloud_path,
+            preprocess_cfg=preprocess_cfg,
+            surface_sample_count=cfg.data.surface_sample_count,
+            points_per_shape=cfg.data.points_per_shape,
+            virtual_length=cfg.data.num_train_samples,
+            base_seed=cfg.train.seed,
+        )
+        logger.info(
+            "Real point cloud mode | path=%s blocks=%d virtual_len=%d voxel=%.4f block=%.4f overlap=%.2f",
+            cfg.data.point_cloud_path,
+            train_dataset.num_blocks,
+            len(train_dataset),
+            cfg.data.voxel_size,
+            cfg.data.block_size,
+            cfg.data.overlap_ratio,
+        )
+    else:
+        raise ValueError("Unsupported data.mode: expected 'dummy' or 'point_cloud'")
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.data.batch_size,
