@@ -62,6 +62,8 @@ def _predict_sdf(
     points: np.ndarray,
     device: torch.device,
     batch_size: int,
+    context_points: Optional[torch.Tensor] = None,
+    context_normals: Optional[torch.Tensor] = None,
 ) -> np.ndarray:
     if points.shape[0] == 0:
         return np.zeros((0,), dtype=np.float32)
@@ -69,7 +71,7 @@ def _predict_sdf(
     with torch.no_grad():
         for start in range(0, points.shape[0], batch_size):
             chunk = torch.from_numpy(points[start : start + batch_size]).to(device=device, dtype=torch.float32)
-            out = model(chunk)
+            out = model(chunk, context_points=context_points, context_normals=context_normals)
             values.append(out["sdf"].detach().cpu().reshape(-1))
     return torch.cat(values, dim=0).numpy().astype(np.float32)
 
@@ -80,6 +82,8 @@ def _extract_single_block_mesh(
     block_index: BlockIndex,
     cfg: BlockwiseExtractConfig,
     device: torch.device,
+    context_points: Optional[torch.Tensor],
+    context_normals: Optional[torch.Tensor],
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, int]]:
     from skimage.measure import marching_cubes
 
@@ -98,6 +102,8 @@ def _extract_single_block_mesh(
             points=grid_points[valid_mask],
             device=device,
             batch_size=cfg.query_batch_size,
+            context_points=context_points,
+            context_normals=context_normals,
         )
 
     sdf_grid = sdf_flat.reshape(cfg.grid_resolution, cfg.grid_resolution, cfg.grid_resolution)
@@ -220,6 +226,8 @@ def extract_mesh_blockwise(
     block_index: BlockIndex,
     cfg: BlockwiseExtractConfig,
     device: torch.device,
+    context_points: Optional[torch.Tensor] = None,
+    context_normals: Optional[torch.Tensor] = None,
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, int]]:
     if cfg.grid_resolution < 2:
@@ -249,6 +257,8 @@ def extract_mesh_blockwise(
             block_index=block_index,
             cfg=cfg,
             device=device,
+            context_points=context_points,
+            context_normals=context_normals,
         )
 
         summary["grid_points"] += stats["grid_points"]

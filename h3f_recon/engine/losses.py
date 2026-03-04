@@ -59,6 +59,31 @@ def _sample_uniform_points(count: int, world_bound: float, device: torch.device)
     return (torch.rand((count, 3), device=device) * 2.0 - 1.0) * float(world_bound)
 
 
+def _build_context_from_batch(
+    batch: Dict[str, torch.Tensor],
+) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    surface_points = batch.get("surface_points")
+    surface_normals = batch.get("surface_normals")
+    point_cloud = batch.get("point_cloud")
+
+    context_points: Optional[torch.Tensor]
+    context_normals: Optional[torch.Tensor]
+
+    if torch.is_tensor(surface_points) and surface_points.numel() > 0:
+        context_points = surface_points.reshape(-1, 3)
+        if torch.is_tensor(surface_normals) and surface_normals.shape == surface_points.shape:
+            context_normals = surface_normals.reshape(-1, 3)
+        else:
+            context_normals = None
+        return context_points, context_normals
+
+    if torch.is_tensor(point_cloud) and point_cloud.numel() > 0:
+        context_points = point_cloud.reshape(-1, 3)
+        return context_points, None
+
+    return None, None
+
+
 def _build_overlap_boxes(index: BlockIndex) -> List[np.ndarray]:
     boxes: List[np.ndarray] = []
     neighbor_offsets = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
@@ -124,11 +149,21 @@ def _sample_seam_points(
     return seam_points
 
 
-def _compute_seam_value_loss(model: torch.nn.Module, seam_points: torch.Tensor) -> torch.Tensor:
+def _compute_seam_value_loss(
+    model: torch.nn.Module,
+    seam_points: torch.Tensor,
+    context_points: Optional[torch.Tensor],
+    context_normals: Optional[torch.Tensor],
+) -> torch.Tensor:
     if seam_points.numel() == 0:
         return seam_points.new_tensor(0.0)
 
-    out = model(seam_points, return_intermediates=True)
+    out = model(
+        seam_points,
+        context_points=context_points,
+        context_normals=context_normals,
+        return_intermediates=True,
+    )
     local_sdf = out.get("local_sdf")
     if local_sdf is None:
         return seam_points.new_tensor(0.0)
@@ -143,12 +178,22 @@ def _compute_seam_value_loss(model: torch.nn.Module, seam_points: torch.Tensor) 
     return diff[:, mask].mean()
 
 
-def _compute_seam_grad_loss(model: torch.nn.Module, seam_points: torch.Tensor) -> torch.Tensor:
+def _compute_seam_grad_loss(
+    model: torch.nn.Module,
+    seam_points: torch.Tensor,
+    context_points: Optional[torch.Tensor],
+    context_normals: Optional[torch.Tensor],
+) -> torch.Tensor:
     if seam_points.numel() == 0:
         return seam_points.new_tensor(0.0)
 
     sample = seam_points.detach().clone().requires_grad_(True)
-    out = model(sample, return_intermediates=True)
+    out = model(
+        sample,
+        context_points=context_points,
+        context_normals=context_normals,
+        return_intermediates=True,
+    )
     local_sdf = out.get("local_sdf")
     if local_sdf is None:
         return seam_points.new_tensor(0.0)
@@ -177,12 +222,22 @@ def _compute_seam_grad_loss(model: torch.nn.Module, seam_points: torch.Tensor) -
     return grad_norm[:, mask].mean()
 
 
-def _compute_blend_smooth_loss(model: torch.nn.Module, points: torch.Tensor) -> torch.Tensor:
+def _compute_blend_smooth_loss(
+    model: torch.nn.Module,
+    points: torch.Tensor,
+    context_points: Optional[torch.Tensor],
+    context_normals: Optional[torch.Tensor],
+) -> torch.Tensor:
     if points.numel() == 0:
         return points.new_tensor(0.0)
 
     sample = points.detach().clone().requires_grad_(True)
-    out = model(sample, return_intermediates=True)
+    out = model(
+        sample,
+        context_points=context_points,
+        context_normals=context_normals,
+        return_intermediates=True,
+    )
     weights = out.get("weights")
     if weights is None:
         return points.new_tensor(0.0)
@@ -205,11 +260,16 @@ def _compute_blend_smooth_loss(model: torch.nn.Module, points: torch.Tensor) -> 
     return torch.stack(per_head).mean()
 
 
-def _compute_eikonal_loss(model: torch.nn.Module, points: torch.Tensor) -> torch.Tensor:
+def _compute_eikonal_loss(
+    model: torch.nn.Module,
+    points: torch.Tensor,
+    context_points: Optional[torch.Tensor],
+    context_normals: Optional[torch.Tensor],
+) -> torch.Tensor:
     if points.numel() == 0:
         return points.new_tensor(0.0)
     sample = points.detach().clone().requires_grad_(True)
-    out = model(sample)
+    out = model(sample, context_points=context_points, context_normals=context_normals)
     grad = torch.autograd.grad(
         outputs=out["sdf"],
         inputs=sample,
@@ -249,19 +309,20 @@ def compute_training_losses(
         block_size=seam_block_size,
         overlap_ratio=seam_overlap_ratio,
     )
+    context_points, context_normals = _build_context_from_batch(batch)
 
     losses: Dict[str, torch.Tensor] = {}
 
     if surface_points.numel() > 0:
-        surf_out = model(surface_points)
+        surf_out = model(surface_points, context_points=context_points, context_normals=context_normals)
         losses["surface"] = surf_out["sdf"].abs().mean()
     else:
         losses["surface"] = torch.tensor(0.0, device=device)
 
     near_loss_type = near_loss_type.lower().strip()
     if near_plus.numel() > 0:
-        plus_out = model(near_plus)["sdf"]
-        minus_out = model(near_minus)["sdf"]
+        plus_out = model(near_plus, context_points=context_points, context_normals=context_normals)["sdf"]
+        minus_out = model(near_minus, context_points=context_points, context_normals=context_normals)["sdf"]
         if near_loss_type == "sign":
             losses["near"] = F.softplus(-plus_out).mean() + F.softplus(minus_out).mean()
         else:
@@ -271,8 +332,18 @@ def compute_training_losses(
     else:
         losses["near"] = torch.tensor(0.0, device=device)
 
-    losses["seam_value"] = _compute_seam_value_loss(model=model, seam_points=seam_points)
-    losses["seam_grad"] = _compute_seam_grad_loss(model=model, seam_points=seam_points)
+    losses["seam_value"] = _compute_seam_value_loss(
+        model=model,
+        seam_points=seam_points,
+        context_points=context_points,
+        context_normals=context_normals,
+    )
+    losses["seam_grad"] = _compute_seam_grad_loss(
+        model=model,
+        seam_points=seam_points,
+        context_points=context_points,
+        context_normals=context_normals,
+    )
 
     if seam_points.numel() > 0:
         smooth_points = seam_points
@@ -280,7 +351,12 @@ def compute_training_losses(
         smooth_points = torch.cat([near_plus, near_minus], dim=0)
     else:
         smooth_points = surface_points
-    losses["blend_smooth"] = _compute_blend_smooth_loss(model=model, points=smooth_points)
+    losses["blend_smooth"] = _compute_blend_smooth_loss(
+        model=model,
+        points=smooth_points,
+        context_points=context_points,
+        context_normals=context_normals,
+    )
 
     if use_eikonal and eikonal_sample_count > 0:
         eik_points = _sample_uniform_points(
@@ -288,7 +364,12 @@ def compute_training_losses(
             world_bound=world_bound,
             device=device,
         )
-        losses["eikonal"] = _compute_eikonal_loss(model=model, points=eik_points)
+        losses["eikonal"] = _compute_eikonal_loss(
+            model=model,
+            points=eik_points,
+            context_points=context_points,
+            context_normals=context_normals,
+        )
     else:
         losses["eikonal"] = torch.tensor(0.0, device=device)
 

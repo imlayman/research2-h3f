@@ -34,6 +34,11 @@ class ModelConfig:
     feature_dims: List[int] = field(default_factory=lambda: [8, 8, 8])
     top_k: int = 3
     num_frequencies: int = 6
+    use_point_geo: bool = True
+    point_geo_k: int = 16
+    point_geo_dim: int = 16
+    point_geo_hidden_dim: int = 32
+    point_geo_max_context: int = 4096
     hidden_dim: int = 96
     decoder_layers: int = 4
     max_candidates: int = 8

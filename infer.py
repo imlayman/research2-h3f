@@ -53,23 +53,25 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_inference_points(args: argparse.Namespace, cfg) -> tuple[np.ndarray, str]:
+def _load_inference_points(args: argparse.Namespace, cfg) -> tuple[np.ndarray, np.ndarray | None, str]:
     if args.point_cloud:
-        points, _ = load_point_cloud(file_path=args.point_cloud, estimate_normals=False)
+        points, normals = load_point_cloud(file_path=args.point_cloud, estimate_normals=False)
         source = args.point_cloud
     elif cfg.data.mode == "dummy":
         dataset = DummyPointCloudDataset(cfg.data, split="val", base_seed=cfg.train.seed)
         sample = dataset[0]
         points = sample["point_cloud"].detach().cpu().numpy().astype(np.float32)
+        normals = None
         source = "dummy_dataset[val:0]"
     else:
         raise ValueError("Please provide --point-cloud for non-dummy data mode")
 
     if args.voxel_size > 0.0:
-        points, _ = voxel_downsample(points=points, normals=None, voxel_size=float(args.voxel_size))
+        points, normals = voxel_downsample(points=points, normals=normals, voxel_size=float(args.voxel_size))
     if points.shape[0] == 0:
         raise ValueError("Input point cloud is empty after preprocessing")
-    return points.astype(np.float32), source
+    normals_out = None if normals is None else normals.astype(np.float32)
+    return points.astype(np.float32), normals_out, source
 
 
 def _resolve_iso_level(args: argparse.Namespace, cfg) -> float:
@@ -117,7 +119,7 @@ def main() -> None:
     )
 
     model.eval()
-    points, point_source = _load_inference_points(args=args, cfg=cfg)
+    points, normals, point_source = _load_inference_points(args=args, cfg=cfg)
 
     overlap_ratio = float(args.overlap_ratio if args.overlap_ratio >= 0.0 else 0.25)
     block_size = float(args.block_size if args.block_size > 0.0 else infer_auto_block_size(points))
@@ -141,6 +143,13 @@ def main() -> None:
     block_index = BlockIndex(points=points, block_size=block_size, overlap_ratio=overlap_ratio)
     logger.info("Built block index: %d blocks", block_index.num_blocks)
 
+    context_points_t = torch.from_numpy(points).to(device=device, dtype=torch.float32)
+    context_normals_t = (
+        None
+        if normals is None
+        else torch.from_numpy(normals).to(device=device, dtype=torch.float32)
+    )
+
     extract_cfg = BlockwiseExtractConfig(
         grid_resolution=grid_resolution,
         query_batch_size=query_batch_size,
@@ -156,6 +165,8 @@ def main() -> None:
         block_index=block_index,
         cfg=extract_cfg,
         device=device,
+        context_points=context_points_t,
+        context_normals=context_normals_t,
         log_fn=logger.info,
     )
 
