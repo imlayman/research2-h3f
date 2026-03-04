@@ -42,22 +42,3 @@ class LocalFusionDecoder(nn.Module):
         blend = self.blend_head(hidden).reshape(n, k, 1)
         uncertainty = self.uncertainty_head(hidden).reshape(n, k, 1)
         return sdf, blend, uncertainty
-
-
-class CoarseField(nn.Module):
-    def __init__(self, hidden_dim: int, num_layers: int) -> None:
-        super().__init__()
-        if num_layers < 2:
-            raise ValueError("num_layers must be >= 2")
-
-        layers = []
-        in_dim = 3
-        for _ in range(num_layers - 1):
-            layers.append(nn.Linear(in_dim, hidden_dim))
-            layers.append(nn.ReLU(inplace=True))
-            in_dim = hidden_dim
-        layers.append(nn.Linear(in_dim, 1))
-        self.net = nn.Sequential(*layers)
-
-    def forward(self, points: torch.Tensor) -> torch.Tensor:
-        return self.net(points)

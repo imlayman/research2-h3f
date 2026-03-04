@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from h3f_recon.config import DataConfig, ModelConfig
-from h3f_recon.models.decoder import CoarseField, LocalFusionDecoder
+from h3f_recon.models.decoder import LocalFusionDecoder
 from h3f_recon.models.positional_encoding import FourierPositionalEncoding
 from h3f_recon.models.sparse_hierarchy import SparseFeatureHierarchy
 
@@ -28,10 +28,6 @@ class H3FRecon(nn.Module):
             hidden_dim=model_cfg.hidden_dim,
             num_layers=model_cfg.decoder_layers,
         )
-        self.coarse_field = CoarseField(
-            hidden_dim=model_cfg.coarse_hidden_dim,
-            num_layers=model_cfg.coarse_layers,
-        )
 
     def forward(self, points: torch.Tensor, return_intermediates: bool = False) -> dict[str, torch.Tensor]:
         if points.ndim != 2 or points.shape[-1] != 3:
@@ -47,12 +43,10 @@ class H3FRecon(nn.Module):
         weights = torch.softmax(blend_logits, dim=1)
         fused_sdf = (weights * local_sdf).sum(dim=1)
         fused_uncertainty = (weights * F.softplus(local_uncertainty)).sum(dim=1)
-        coarse_sdf = self.coarse_field(points)
 
         out = {
             "sdf": fused_sdf,
             "uncertainty": fused_uncertainty,
-            "coarse_sdf": coarse_sdf,
         }
 
         if return_intermediates:

@@ -158,12 +158,14 @@ def main() -> None:
 
             if global_step % cfg.train.log_interval == 0:
                 logger.info(
-                    "step=%d total=%.4f surf=%.4f near=%.4f seam=%.4f eik=%.4f",
+                    "step=%d total=%.4f surf=%.4f near=%.4f seam=%.4f seam_g=%.4f blend=%.4f eik=%.4f",
                     global_step,
                     stats["total"],
                     stats["surface"],
                     stats["near"],
                     stats["seam_value"],
+                    stats["seam_grad"],
+                    stats["blend_smooth"],
                     stats["eikonal"],
                 )
 

@@ -29,8 +29,6 @@ class ModelConfig:
     num_frequencies: int = 6
     hidden_dim: int = 96
     decoder_layers: int = 4
-    coarse_hidden_dim: int = 64
-    coarse_layers: int = 3
     max_candidates: int = 8
 
 
@@ -41,7 +39,6 @@ class LossConfig:
     eikonal: float = 0.1
     seam: float = 0.2
     seam_grad: float = 0.05
-    coarse_global: float = 0.1
     blend_smooth: float = 0.01
 
 

@@ -22,8 +22,6 @@ model:
   num_frequencies: 6
   hidden_dim: 96
   decoder_layers: 4
-  coarse_hidden_dim: 64
-  coarse_layers: 3
   max_candidates: 8
 
 train:
@@ -45,7 +43,6 @@ train:
     eikonal: 0.1
     seam: 0.2
     seam_grad: 0.05
-    coarse_global: 0.1
     blend_smooth: 0.01
 
 infer:

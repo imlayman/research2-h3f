@@ -8,6 +8,7 @@ dependencies:
   - numpy
   - pyyaml
   - tqdm
+  - scikit-image
   - pytorch>=2.0
   - cpuonly
   - pip:

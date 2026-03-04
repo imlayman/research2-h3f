@@ -143,6 +143,68 @@ def _compute_seam_value_loss(model: torch.nn.Module, seam_points: torch.Tensor) 
     return diff[:, mask].mean()
 
 
+def _compute_seam_grad_loss(model: torch.nn.Module, seam_points: torch.Tensor) -> torch.Tensor:
+    if seam_points.numel() == 0:
+        return seam_points.new_tensor(0.0)
+
+    sample = seam_points.detach().clone().requires_grad_(True)
+    out = model(sample, return_intermediates=True)
+    local_sdf = out.get("local_sdf")
+    if local_sdf is None:
+        return seam_points.new_tensor(0.0)
+
+    local = local_sdf.squeeze(-1)  # [N, K]
+    k = local.shape[1]
+    if k < 2:
+        return seam_points.new_tensor(0.0)
+
+    grads = []
+    for i in range(k):
+        grad_i = torch.autograd.grad(
+            outputs=local[:, i].sum(),
+            inputs=sample,
+            create_graph=True,
+            retain_graph=True,
+            allow_unused=False,
+        )[0]
+        grads.append(grad_i)
+
+    grad_stack = torch.stack(grads, dim=1)  # [N, K, 3]
+    grad_diff = grad_stack.unsqueeze(2) - grad_stack.unsqueeze(1)  # [N, K, K, 3]
+    grad_norm = grad_diff.norm(dim=-1)
+
+    mask = torch.triu(torch.ones((k, k), device=grad_norm.device, dtype=torch.bool), diagonal=1)
+    return grad_norm[:, mask].mean()
+
+
+def _compute_blend_smooth_loss(model: torch.nn.Module, points: torch.Tensor) -> torch.Tensor:
+    if points.numel() == 0:
+        return points.new_tensor(0.0)
+
+    sample = points.detach().clone().requires_grad_(True)
+    out = model(sample, return_intermediates=True)
+    weights = out.get("weights")
+    if weights is None:
+        return points.new_tensor(0.0)
+
+    blend = weights.squeeze(-1)  # [N, K]
+    if blend.ndim != 2 or blend.shape[1] == 0:
+        return points.new_tensor(0.0)
+
+    per_head = []
+    for i in range(blend.shape[1]):
+        grad_i = torch.autograd.grad(
+            outputs=blend[:, i].sum(),
+            inputs=sample,
+            create_graph=True,
+            retain_graph=True,
+            allow_unused=False,
+        )[0]
+        per_head.append((grad_i.norm(dim=-1) ** 2).mean())
+
+    return torch.stack(per_head).mean()
+
+
 def _compute_eikonal_loss(model: torch.nn.Module, points: torch.Tensor) -> torch.Tensor:
     if points.numel() == 0:
         return points.new_tensor(0.0)
@@ -210,6 +272,15 @@ def compute_training_losses(
         losses["near"] = torch.tensor(0.0, device=device)
 
     losses["seam_value"] = _compute_seam_value_loss(model=model, seam_points=seam_points)
+    losses["seam_grad"] = _compute_seam_grad_loss(model=model, seam_points=seam_points)
+
+    if seam_points.numel() > 0:
+        smooth_points = seam_points
+    elif near_plus.numel() > 0:
+        smooth_points = torch.cat([near_plus, near_minus], dim=0)
+    else:
+        smooth_points = surface_points
+    losses["blend_smooth"] = _compute_blend_smooth_loss(model=model, points=smooth_points)
 
     if use_eikonal and eikonal_sample_count > 0:
         eik_points = _sample_uniform_points(
@@ -225,6 +296,8 @@ def compute_training_losses(
         loss_cfg.surface * losses["surface"]
         + loss_cfg.sign * losses["near"]
         + loss_cfg.seam * losses["seam_value"]
+        + loss_cfg.seam_grad * losses["seam_grad"]
+        + loss_cfg.blend_smooth * losses["blend_smooth"]
         + loss_cfg.eikonal * losses["eikonal"]
     )
 
