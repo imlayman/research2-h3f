@@ -1,5 +1,5 @@
 ﻿import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 import torch
 
@@ -32,7 +32,7 @@ def load_checkpoint(
     path: str,
     model: torch.nn.Module,
     optimizer: Optional[torch.optim.Optimizer] = None,
-    map_location: str | torch.device = "cpu",
+    map_location: Union[str, torch.device] = "cpu",
 ) -> Dict[str, Any]:
     checkpoint = torch.load(path, map_location=map_location)
 
