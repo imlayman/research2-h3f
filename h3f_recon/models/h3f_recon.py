@@ -21,6 +21,10 @@ class H3FRecon(nn.Module):
             feature_dims=model_cfg.feature_dims,
             world_bound=data_cfg.world_bound,
             max_candidates=model_cfg.max_candidates,
+            use_active_refine=model_cfg.use_active_refine,
+            active_min_points=model_cfg.active_min_points,
+            active_complexity_quantile=model_cfg.active_complexity_quantile,
+            active_min_complexity=model_cfg.active_min_complexity,
         )
         self.positional_encoding = FourierPositionalEncoding(model_cfg.num_frequencies)
 
@@ -52,7 +56,7 @@ class H3FRecon(nn.Module):
         if points.ndim != 2 or points.shape[-1] != 3:
             raise ValueError("points must have shape [N, 3]")
 
-        sparse_query = self.sparse_hierarchy(points, top_k=self.top_k)
+        sparse_query = self.sparse_hierarchy(points, top_k=self.top_k, context_points=context_points)
         encoded_local = self.positional_encoding(sparse_query["local_coords"])
         decoder_parts = [encoded_local, sparse_query["features"]]
 

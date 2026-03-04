@@ -32,6 +32,10 @@ model:
   point_geo_dim: 16
   point_geo_hidden_dim: 32
   point_geo_max_context: 4096
+  use_active_refine: true
+  active_min_points: 8
+  active_complexity_quantile: 0.6
+  active_min_complexity: 0.0001
   hidden_dim: 96
   decoder_layers: 4
   max_candidates: 8

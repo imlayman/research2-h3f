@@ -39,6 +39,10 @@ class ModelConfig:
     point_geo_dim: int = 16
     point_geo_hidden_dim: int = 32
     point_geo_max_context: int = 4096
+    use_active_refine: bool = True
+    active_min_points: int = 8
+    active_complexity_quantile: float = 0.6
+    active_min_complexity: float = 1e-4
     hidden_dim: int = 96
     decoder_layers: int = 4
     max_candidates: int = 8
