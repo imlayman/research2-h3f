@@ -59,6 +59,26 @@ class PointGeometryEncoder(nn.Module):
         idx_expand = knn_idx.unsqueeze(-1).expand(n, k, c)
         return torch.gather(values, dim=1, index=idx_expand)
 
+    @staticmethod
+    def _safe_eigvalsh(cov: torch.Tensor, chunk_size: int = 8192) -> torch.Tensor:
+        cov_f32 = cov.float()
+        if cov_f32.size(0) == 0:
+            return cov_f32.new_empty((0, 3))
+
+        eigvals_parts = []
+        for start in range(0, cov_f32.size(0), max(1, int(chunk_size))):
+            part = cov_f32[start : start + max(1, int(chunk_size))]
+            try:
+                eig_part = torch.linalg.eigvalsh(part)
+            except RuntimeError as exc:
+                # Some CUDA environments fail on large batched eigvalsh; fall back to CPU for robustness.
+                if part.is_cuda and "cusolver" in str(exc).lower():
+                    eig_part = torch.linalg.eigvalsh(part.cpu()).to(device=part.device)
+                else:
+                    raise
+            eigvals_parts.append(eig_part)
+        return torch.cat(eigvals_parts, dim=0)
+
     def forward(
         self,
         query_points: torch.Tensor,
@@ -103,7 +123,8 @@ class PointGeometryEncoder(nn.Module):
 
         centered = rel - rel.mean(dim=1, keepdim=True)
         cov = torch.matmul(centered.transpose(1, 2), centered) / float(max(k, 1))
-        eigvals = torch.linalg.eigvalsh(cov).clamp_min(1e-8)
+        # eigvalsh is not available for float16 and can be unstable for very large CUDA batches.
+        eigvals = self._safe_eigvalsh(cov).clamp_min(1e-8).to(cov.dtype)
         curvature = eigvals[:, 0:1] / (eigvals.sum(dim=1, keepdim=True) + 1e-6)
         anisotropy = eigvals[:, 2:3] / (eigvals[:, 1:2] + 1e-6)
 

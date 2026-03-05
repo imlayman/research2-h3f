@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", type=str, default="", help="Checkpoint path")
     parser.add_argument("--run-name", type=str, default="", help="Override infer.run_name")
     parser.add_argument("--device", type=str, default="", help="Override infer.device")
-    parser.add_argument("--point-cloud", type=str, default="", help="Input point cloud path (.ply/.xyz/.pcd)")
+    parser.add_argument("--point-cloud", type=str, default="", help="Input point cloud path (.ply/.xyz/.pcd/.npz)")
     parser.add_argument("--voxel-size", type=float, default=0.0, help="Optional voxel downsample size")
     parser.add_argument("--block-size", type=float, default=0.0, help="Block core size, auto if <= 0")
     parser.add_argument(

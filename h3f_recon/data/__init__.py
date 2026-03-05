@@ -3,8 +3,10 @@
 try:
     from .dataset import (
         PointCloudBlockDataset,
+        PointCloudCollectionTrainDataset,
         PointCloudTrainDataset,
         PointCloudPreprocessConfig,
+        discover_dataset_point_clouds,
         estimate_normals_knn,
         load_point_cloud,
         voxel_downsample,

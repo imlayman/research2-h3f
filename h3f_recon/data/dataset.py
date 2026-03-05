@@ -1,8 +1,9 @@
 ﻿from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from torch.utils.data import Dataset
@@ -246,6 +247,42 @@ def _load_ascii_pcd(path: Path) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     return points, normals
 
 
+def _load_npz_point_cloud(path: Path) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    with np.load(path, allow_pickle=True) as data:
+        # Guard against passing occupancy supervision files (e.g. points.npz)
+        # where "points" are query samples instead of input point-cloud observations.
+        if "occupancies" in data:
+            raise ValueError(
+                f"NPZ file looks like occupancy samples (has 'occupancies'): {path}. "
+                "Please use pointcloud.npz / pointcloud_XX.npz for point cloud input."
+            )
+
+        point_keys = ("points", "xyz", "pointcloud")
+        points = None
+        for key in point_keys:
+            if key in data:
+                points = np.asarray(data[key], dtype=np.float32)
+                break
+        if points is None:
+            raise ValueError(
+                "NPZ point cloud must contain one of keys: " + ", ".join(point_keys)
+            )
+        if points.ndim != 2 or points.shape[1] != 3:
+            raise ValueError("NPZ points must have shape [N, 3]")
+
+        normals = None
+        normal_keys = ("normals", "normal")
+        for key in normal_keys:
+            if key in data:
+                candidate = np.asarray(data[key], dtype=np.float32)
+                if candidate.ndim != 2 or candidate.shape != points.shape:
+                    raise ValueError("NPZ normals must have shape [N, 3] and align with points")
+                normals = _normalize_vectors(candidate)
+                break
+
+    return points.astype(np.float32), None if normals is None else normals.astype(np.float32)
+
+
 def _try_load_with_open3d(path: Path) -> Optional[Tuple[np.ndarray, Optional[np.ndarray]]]:
     try:
         import open3d as o3d  # type: ignore
@@ -276,16 +313,19 @@ def load_point_cloud(
 
     suffix = path.suffix.lower()
 
-    loaded = _try_load_with_open3d(path)
-    if loaded is None:
-        if suffix == ".ply":
-            loaded = _load_ascii_ply(path)
-        elif suffix == ".xyz":
-            loaded = _load_ascii_xyz(path)
-        elif suffix == ".pcd":
-            loaded = _load_ascii_pcd(path)
-        else:
-            raise ValueError(f"Unsupported format: {suffix}. Supported: .ply/.xyz/.pcd")
+    if suffix == ".npz":
+        loaded = _load_npz_point_cloud(path)
+    else:
+        loaded = _try_load_with_open3d(path)
+        if loaded is None:
+            if suffix == ".ply":
+                loaded = _load_ascii_ply(path)
+            elif suffix == ".xyz":
+                loaded = _load_ascii_xyz(path)
+            elif suffix == ".pcd":
+                loaded = _load_ascii_pcd(path)
+            else:
+                raise ValueError(f"Unsupported format: {suffix}. Supported: .ply/.xyz/.pcd/.npz")
 
     points, normals = loaded
 
@@ -440,4 +480,176 @@ class PointCloudTrainDataset(Dataset):
             "point_cloud": point_cloud.astype(np.float32),
             "surface_points": surface_points.astype(np.float32),
             "surface_normals": surface_normals.astype(np.float32),
+        }
+
+
+def _dataset_category_dirs(dataset_root: Path, categories: Sequence[str]) -> List[Path]:
+    if categories:
+        dirs = [dataset_root / c for c in categories]
+        missing = [str(p) for p in dirs if not p.is_dir()]
+        if missing:
+            raise FileNotFoundError(f"Dataset categories not found: {missing}")
+        return sorted(dirs)
+
+    return sorted([p for p in dataset_root.iterdir() if p.is_dir() and not p.name.startswith(".")])
+
+
+def _read_split_or_all_models(category_dir: Path, split: str) -> List[str]:
+    split_file = category_dir / f"{split}.lst"
+    if split_file.exists():
+        with split_file.open("r", encoding="utf-8") as f:
+            return [line.strip() for line in f if line.strip()]
+    return sorted([p.name for p in category_dir.iterdir() if p.is_dir() and not p.name.startswith(".")])
+
+
+def discover_dataset_point_clouds(
+    dataset_root: str,
+    dataset_name: str,
+    split: str,
+    categories: Sequence[str],
+) -> List[str]:
+    root = Path(dataset_root)
+    if not root.exists():
+        raise FileNotFoundError(f"Dataset root not found: {dataset_root}")
+
+    kind = dataset_name.strip().lower()
+    if kind not in {"shapenet", "synthetic_room", "synthetic_rooms"}:
+        raise ValueError("dataset_name must be one of: shapenet, synthetic_room, synthetic_rooms")
+
+    scene_paths: List[str] = []
+    for category_dir in _dataset_category_dirs(root, categories):
+        model_ids = _read_split_or_all_models(category_dir, split)
+        for model_id in model_ids:
+            model_dir = category_dir / model_id
+            if not model_dir.is_dir():
+                continue
+
+            if kind == "shapenet":
+                candidate = model_dir / "pointcloud.npz"
+                if candidate.exists():
+                    scene_paths.append(str(candidate))
+                continue
+
+            pointcloud_dir = model_dir / "pointcloud"
+            if pointcloud_dir.is_dir():
+                npz_files = sorted(pointcloud_dir.glob("pointcloud_*.npz"))
+                if npz_files:
+                    scene_paths.append(str(npz_files[0]))
+                    continue
+
+            candidate_npz = model_dir / "pointcloud.npz"
+            if candidate_npz.exists():
+                scene_paths.append(str(candidate_npz))
+                continue
+
+            candidate_ply = model_dir / "pointcloud0.ply"
+            if candidate_ply.exists():
+                scene_paths.append(str(candidate_ply))
+
+    if not scene_paths:
+        raise RuntimeError(
+            f"No point clouds found under root={dataset_root} dataset_name={dataset_name} split={split}"
+        )
+    return scene_paths
+
+
+class PointCloudCollectionTrainDataset(Dataset):
+    def __init__(
+        self,
+        dataset_root: str,
+        dataset_name: str,
+        split: str,
+        categories: Sequence[str],
+        preprocess_cfg: PointCloudPreprocessConfig,
+        surface_sample_count: int,
+        points_per_shape: int,
+        start: int = 0,
+        take: int = -1,
+        cache_size: int = 8,
+        base_seed: int = 42,
+    ) -> None:
+        super().__init__()
+        if surface_sample_count <= 0:
+            raise ValueError("surface_sample_count must be > 0")
+        if points_per_shape <= 0:
+            raise ValueError("points_per_shape must be > 0")
+
+        scene_paths = discover_dataset_point_clouds(
+            dataset_root=dataset_root,
+            dataset_name=dataset_name,
+            split=split,
+            categories=categories,
+        )
+        start_idx = max(0, int(start))
+        if start_idx > 0:
+            scene_paths = scene_paths[start_idx:]
+        if int(take) > 0:
+            scene_paths = scene_paths[: int(take)]
+        if not scene_paths:
+            raise RuntimeError("PointCloudCollectionTrainDataset has no scenes after slicing")
+
+        self.preprocess_cfg = preprocess_cfg
+        self.surface_sample_count = int(surface_sample_count)
+        self.points_per_shape = int(points_per_shape)
+        self.scene_paths = scene_paths
+        self.base_seed = int(base_seed)
+        self.cache_size = max(1, int(cache_size))
+        self._scene_cache: "OrderedDict[str, Tuple[np.ndarray, np.ndarray]]" = OrderedDict()
+
+    @property
+    def num_scenes(self) -> int:
+        return len(self.scene_paths)
+
+    def __len__(self) -> int:
+        return len(self.scene_paths)
+
+    @staticmethod
+    def _sample_indices(n: int, count: int, rng: np.random.Generator) -> np.ndarray:
+        if n <= 0:
+            return np.zeros((count,), dtype=np.int64)
+        replace = n < count
+        return rng.choice(n, size=count, replace=replace).astype(np.int64)
+
+    def _load_scene(self, scene_path: str) -> Tuple[np.ndarray, np.ndarray]:
+        cached = self._scene_cache.get(scene_path)
+        if cached is not None:
+            self._scene_cache.move_to_end(scene_path)
+            return cached
+
+        points, normals = load_point_cloud(
+            file_path=scene_path,
+            estimate_normals=self.preprocess_cfg.estimate_normals,
+            normal_k=self.preprocess_cfg.normal_k,
+        )
+        points, normals = voxel_downsample(
+            points=points,
+            normals=normals,
+            voxel_size=self.preprocess_cfg.voxel_size,
+        )
+        if points.shape[0] == 0:
+            raise ValueError(f"Empty point cloud loaded from scene: {scene_path}")
+
+        if normals is None:
+            normals = np.zeros_like(points, dtype=np.float32)
+
+        scene_data = (points.astype(np.float32), normals.astype(np.float32))
+        self._scene_cache[scene_path] = scene_data
+        self._scene_cache.move_to_end(scene_path)
+        while len(self._scene_cache) > self.cache_size:
+            self._scene_cache.popitem(last=False)
+
+        return scene_data
+
+    def __getitem__(self, idx: int) -> Dict[str, np.ndarray]:
+        scene_path = self.scene_paths[int(idx) % len(self.scene_paths)]
+        points, normals = self._load_scene(scene_path)
+
+        rng = np.random.default_rng(self.base_seed + int(idx))
+        surf_idx = self._sample_indices(points.shape[0], self.surface_sample_count, rng)
+        cloud_idx = self._sample_indices(points.shape[0], self.points_per_shape, rng)
+
+        return {
+            "point_cloud": points[cloud_idx].astype(np.float32),
+            "surface_points": points[surf_idx].astype(np.float32),
+            "surface_normals": normals[surf_idx].astype(np.float32),
         }

@@ -8,6 +8,16 @@ import yaml
 class DataConfig:
     mode: str = "dummy"
     point_cloud_path: str = ""
+    dataset_root: str = ""
+    dataset_name: str = ""
+    dataset_split: str = "train"
+    dataset_val_split: str = "val"
+    dataset_categories: List[str] = field(default_factory=list)
+    dataset_start: int = 0
+    dataset_take: int = -1
+    dataset_val_start: int = 0
+    dataset_val_take: int = -1
+    dataset_cache_size: int = 8
     voxel_size: float = 0.0
     block_size: float = 0.5
     overlap_ratio: float = 0.25
@@ -69,6 +79,8 @@ class TrainConfig:
     grad_clip: float = 1.0
     log_interval: int = 10
     save_every: int = 1
+    val_every: int = 1
+    val_max_batches: int = 0
     resume: str = ""
     seam_sample_count: int = 128
     eikonal_sample_count: int = 128

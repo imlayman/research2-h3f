@@ -1,0 +1,83 @@
+output_root: runs
+
+data:
+  mode: dataset
+  point_cloud_path: ""
+  dataset_root: /data3/xxf/dataset/synthetic_room_dataset
+  dataset_name: synthetic_room
+  dataset_split: train
+  dataset_val_split: val
+  dataset_categories: [rooms_04, rooms_05, rooms_06, rooms_07, rooms_08]
+  dataset_start: 0
+  dataset_take: -1
+  dataset_val_start: 0
+  dataset_val_take: -1
+  dataset_cache_size: 8
+  voxel_size: 0.0
+  block_size: 0.5
+  overlap_ratio: 0.25
+  estimate_normals: false
+  normal_k: 16
+  fill_empty_normals: true
+  num_train_samples: 128
+  num_val_samples: 16
+  batch_size: 4
+  num_workers: 0
+  points_per_shape: 2048
+  surface_sample_count: 512
+  near_surface_sample_count: 512
+  eikonal_sample_count: 256
+  noise_std: 0.01
+  near_surface_offset: 0.03
+  world_bound: 1.0
+
+model:
+  resolutions: [16, 32, 64]
+  cells_per_level: [2048, 4096, 8192]
+  feature_dims: [8, 8, 8]
+  top_k: 3
+  num_frequencies: 6
+  use_point_geo: true
+  point_geo_k: 16
+  point_geo_dim: 16
+  point_geo_hidden_dim: 32
+  point_geo_max_context: 4096
+  use_active_refine: true
+  active_min_points: 8
+  active_complexity_quantile: 0.6
+  active_min_complexity: 0.0001
+  hidden_dim: 96
+  decoder_layers: 4
+  max_candidates: 8
+
+train:
+  seed: 42
+  run_name: h3f_synthetic_rooms
+  device: auto
+  epochs: 20
+  lr: 0.001
+  weight_decay: 0.0
+  grad_clip: 1.0
+  log_interval: 10
+  save_every: 1
+  val_every: 1
+  val_max_batches: 64
+  resume: ""
+  seam_sample_count: 128
+  eikonal_sample_count: 128
+  loss:
+    surface: 1.0
+    sign: 1.0
+    eikonal: 0.1
+    seam: 0.2
+    seam_grad: 0.05
+    blend_smooth: 0.01
+
+infer:
+  checkpoint: ""
+  run_name: h3f_synthetic_rooms_infer
+  device: auto
+  grid_resolution: 48
+  query_batch_size: 65536
+  iso_threshold: 0.02
+  output_name: recon_surface
